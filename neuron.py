@@ -10,15 +10,14 @@ import os
 def main():
     
 
-
     path = "archive/data.csv"
         
     # Load data from CSV
     X, y, X_val, y_val = load_data(path, validation_ratio=0.2)
 
-    layer_nb = 4 # Number of hidden layers in the neural network
+    layer_nb = 3 # Number of hidden layers in the neural network
     alpha = 0.01  # Learning rate
-    epochs = 1000 # Number of epochs for training
+    epochs = 2000 # Number of epochs for training
     
     n = init_neuron_layers(layer_nb, X)  # Initialize the number of neurons in each layer
     
