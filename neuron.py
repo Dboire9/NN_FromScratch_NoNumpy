@@ -1,93 +1,140 @@
 from my_tools import my_random as mr
+import random
 from my_tools.VectorMatrixClass import Matrix, Vector
-from my_tools.misc import my_sigmoid
-from math import log
+from math import log, exp
 from matplotlib import pyplot as plt
+import csv
+import os
 
 
 def main():
     
-    
-    n = [2,3,3,1]  # Number of neurons in each layer
-    
-    print("layer 0 / input layer size", n[0])
-    print("layer 1 size", n[1])
-    print("layer 2 size", n[2])
-    print("layer 3 size", n[3])
 
-    W1 = Matrix(mr.randn(n[1], n[0]))
-    W2 = Matrix(mr.randn(n[2], n[1]))
-    W3 = Matrix(mr.randn(n[3], n[2]))
-    
-    b1 = Vector(mr.randn_vec(n[1]))
-    b2 = Vector(mr.randn_vec(n[2]))
-    b3 = Vector(mr.randn_vec(n[3]))
-    
-    weight_array = [W1, W2, W3]
-    bias_array = [b1, b2, b3]
 
+    path = "archive/data.csv"
+        
+    # Load data from CSV
+    X, y, X_val, y_val = load_data(path, validation_ratio=0.2)
+
+    layer_nb = 4 # Number of hidden layers in the neural network
+    alpha = 0.01  # Learning rate
+    epochs = 1000 # Number of epochs for training
     
-    print("W1", W1.shape(), "\nW2", W2.shape(), "\nW3", W3.shape())
-    print("b1", len(b1), "\nb2", len(b2), "\nb3", len(b3))
-
-    # X is our training data
-    X = Matrix([[150, 70], 
-    [254, 73],
-    [312, 68],
-    [120, 60],
-    [154, 61],
-    [212, 65],
-    [216, 67],
-    [145, 67],
-    [184, 64],
-    [130, 69]])
-
-    print("X shape", X.shape())
+    n = init_neuron_layers(layer_nb, X)  # Initialize the number of neurons in each layer
+    
+    weight_array, bias_array = neuron_init(n, X.num_rows)  # Initialize weights and biases for the network
     
     A0 = X.transpose()  # Transpose X to match the expected input shape for the first layer
-    print("X shape after transpose", A0.shape())
-    
-    y = Vector([0,
-    1,
-    1,
-    0,
-    0,
-    1,
-    1,
-    0,
-    1,
-    0])
     
     m = len(y)
     print(m, "samples in training set")
-    Y = y.reshape(n[3], m)  # Reshape y to match the output layer size
-    print("Y shape", Y.shape())
+    Y = y.reshape(n[-1], m)  # Reshape y to match the output layer size
     
-    costs = train(weight_array, bias_array, A0, Y, n, m)
+    
+    costs = train(weight_array, bias_array, A0, Y, n, m, alpha, epochs)
     plt.plot(costs)
     plt.xlabel('Epoch')
     plt.ylabel('Cost')
     plt.title('Cost over Epochs')
     plt.show()
-
-
-
-
-def train(weight_array, bias_array, A0, Y, n, m):
-    epochs = 2000 # Number of epochs for training
-    alpha = 0.1  # Learning rate
-    costs = []
-    for e in range(epochs):
     
+    accuracy = validate(weight_array, bias_array, X_val, y_val, n)
+    print(f"Final validation accuracy: {accuracy:.4f}")
+
+def load_data(csv_path, validation_ratio=0.2):
+    # Read CSV
+    if not os.path.exists(csv_path):
+        print("File does not exist.")
+        exit()
+        
+    with open(csv_path, newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        header = next(reader)
+        data = []
+        for row in reader:
+            # Skip rows with missing data
+            if '' in row:
+                continue
+            # Convert diagnosis to 0/1, skip id
+            features = list(map(float, row[2:]))
+            label = 1.0 if row[1] == 'M' else 0.0
+            data.append((features, label))
+        
+    random.shuffle(data)
+        
+    # Split features and labels
+    X_data = [features for features, label in data]
+    y_data = [label for features, label in data]
+
+    # Split into train/validation
+    split_idx = int(len(data) * (1 - validation_ratio))
+    X_train = X_data[:split_idx]
+    y_train = y_data[:split_idx]
+    X_val = X_data[split_idx:]
+    y_val = y_data[split_idx:]
+
+    # Convert to Matrix/Vector
+    X = Matrix(X_train)
+    y = Vector(y_train)
+    X_val = Matrix(X_val)
+    y_val = Vector(y_val)
+
+    return X, y, X_val, y_val
+
+def init_neuron_layers(layer_nb, X):
+    n = [X.num_cols]  # Input layer
+    neurons = 64  # or any power of 2 you want to start with
+    for i in range(layer_nb - 1):
+        n.append(neurons)
+        neurons = max(2, neurons // 2)  # Halve, but not less than 2
+    n.append(1)  # Output layer
+    print(n)
+    return n
+
+def neuron_init(n, m):
+    """
+    Initialize weights and biases for a neural network with n layers.
+    n: list of integers, where n[i] is the number of neurons in layer i
+    m: number of samples
+    Returns: weight_array, bias_array
+    """
+    weight_array = []
+    bias_array = []
+    
+    for i in range(len(n) - 1):
+        W = Matrix(mr.randn(n[i + 1], n[i]))
+        b = Vector(mr.randn_vec(n[i + 1]))
+        weight_array.append(W)
+        bias_array.append(b)
+    
+    return weight_array, bias_array
+
+def train(weight_array, bias_array, A0, Y, n, m, alpha, epochs, patience=20, min_delta=1e-6):
+    costs = []
+    best_cost = float('inf')
+    epochs_no_improve = 0
+
+    for e in range(epochs):
         y_hat, AL = layer_calculations(m, weight_array, bias_array, A0, n)
         error = cost(y_hat, Y)
         costs.append(error)
         dC_dW, dC_db = backpropagation_loop(y_hat, Y, AL, weight_array, n, m)
         weight_array, bias_array = update_weights_and_biases(weight_array, bias_array, dC_dW, dC_db, m, alpha)
-        
+
         if e % 20 == 0:
             print(f"epoch {e}: cost = {error:4f}")
-    
+
+        # Early stopping logic
+        if best_cost - error > min_delta:
+            best_cost = error
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= patience:
+            print(f"Early stopping at epoch {e} (cost did not improve for {patience} epochs)")
+            break
+
     return costs
 
 def layer_calculations(m, weight_matrices, bias_vector, A0, n):
@@ -107,7 +154,6 @@ def layer_calculations(m, weight_matrices, bias_vector, A0, n):
 
 def cost(y_hat, y):
     """Compute the cost function with numerical stability (epsilon)."""
-    from math import log
 
     eps = 1e-8
     y_hat_vals = [v for row in y_hat.rows for v in row]
@@ -122,10 +168,22 @@ def cost(y_hat, y):
     return summed_loss
 
 
-def sigmoid_derivative(A):
-    # A is the activation (already sigmoid-ed)
-    return A * (1 - A)
+def my_sigmoid(x):
+    """Sigmoid activation function with overflow protection."""
+    from my_tools.VectorMatrixClass import Vector, Matrix
 
+    def safe_sigmoid(v):
+        v = max(min(v, 500), -500)  # Clip to avoid overflow
+        return 1 / (1 + exp(-v))
+
+    if isinstance(x, Vector):
+        return Vector([safe_sigmoid(v) for v in x])
+    elif isinstance(x, Matrix):
+        return Matrix([[safe_sigmoid(v) for v in row] for row in x.rows])
+    elif hasattr(x, "__iter__") and not isinstance(x, str):
+        return type(x)([safe_sigmoid(v) for v in x])
+    else:
+        return safe_sigmoid(x)
 
 def backpropagation_loop(y_hat, Y, A_list, W_list, n, m):
     dC_dA = (1/m) * (y_hat - Y)
@@ -192,6 +250,24 @@ def update_weights_and_biases(weight_matrices, bias_vectors, dC_dW, dC_db, m, le
         bias_vectors[i] = bias_vectors[i] - db_vec
         
     return weight_matrices, bias_vectors
+
+def validate(weight_array, bias_array, X_val, y_val, n):
+    """
+    Evaluate the model on the validation set.
+    Returns accuracy.
+    """
+    m_val = X_val.num_rows
+    A0_val = X_val.transpose()
+    y_hat_val, _ = layer_calculations(m_val, weight_array, bias_array, A0_val, n)
+    # Flatten predictions and labels
+    y_hat_flat = [v for row in y_hat_val.rows for v in row]
+    y_true_flat = [v for v in y_val]
+    # Apply threshold 0.5 to get predicted class
+    y_pred = [1 if v >= 0.5 else 0 for v in y_hat_flat]
+    correct = sum(1 for yp, yt in zip(y_pred, y_true_flat) if yp == yt)
+    accuracy = correct / len(y_true_flat)
+    print(f"Validation accuracy: {accuracy:.4f}")
+    return accuracy
 
 if __name__ == "__main__":
     main()
