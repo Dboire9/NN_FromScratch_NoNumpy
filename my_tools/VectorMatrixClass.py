@@ -1,4 +1,4 @@
-from math import tan, pi
+from math import tan, pi, exp
 
 class Vector:
     def __init__(self, values):
@@ -106,6 +106,15 @@ class Matrix:
         self.num_cols = len(rows[0]) if rows else 0
         if not all(len(row) == self.num_cols for row in rows):
             raise ValueError("All rows must have the same length")
+    
+    def __len__(self):
+        # Returns the number of columns if matrix is not empty, else 0
+        if self.rows and len(self.rows[0]) > 1:
+            return len(self.rows[0])
+        elif self.rows:
+            return len(self.rows)
+        else:
+            return 0
 
     def __str__(self):
         return '\n'.join([f"[{', '.join(map(str, row))}]" for row in self.rows])
@@ -203,6 +212,9 @@ class Matrix:
         if swaps != 0:
             total *= swaps * -1
         return total
+    
+    def exp(self):
+        return Matrix([[exp(v) for v in row] for row in self.rows])
     
     def inverse(self):
         """Return the inverse of a given square matrix"""

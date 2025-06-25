@@ -5,21 +5,25 @@ from math import log, exp
 from matplotlib import pyplot as plt
 import csv
 import os
+import kagglehub
 
 
 def main():
     
 
-    path = "archive/data.csv"
-        
-    # Load data from CSV
-    X, y, X_val, y_val = load_data(path, validation_ratio=0.2)
+    # path = "archive/data.csv"
+    dir_path = kagglehub.dataset_download("uciml/iris")
+    csv_path = os.path.join(dir_path, "Iris.csv")  # This is the actual CSV file
+    X, y, X_val, y_val = load_data(csv_path, validation_ratio=0.2)
 
-    layer_nb = 3 # Number of hidden layers in the neural network
-    alpha = 0.01  # Learning rate
+    layer_nb = 4 # Number of hidden layers in the neural network
+    alpha = 0.05  # Learning rate
     epochs = 2000 # Number of epochs for training
     
-    n = init_neuron_layers(layer_nb, X)  # Initialize the number of neurons in each layer
+    output_activation = "softmax"  # "sigmoid" or "softmax"
+
+    num_classes = 3  # Number of classes in the Iris dataset (setosa, versicolor, virginica)
+    n = init_neuron_layers(layer_nb, X, num_classes)  # Initialize the number of neurons in each layer
     
     weight_array, bias_array = neuron_init(n, X.num_rows)  # Initialize weights and biases for the network
     
@@ -27,10 +31,10 @@ def main():
     
     m = len(y)
     print(m, "samples in training set")
-    Y = y.reshape(n[-1], m)  # Reshape y to match the output layer size
+    Y = y
     
     
-    costs = train(weight_array, bias_array, A0, Y, n, m, alpha, epochs)
+    costs = train(weight_array, bias_array, A0, Y, n, m, alpha, epochs, output_activation=output_activation)
     plt.plot(costs)
     plt.xlabel('Epoch')
     plt.ylabel('Cost')
@@ -51,12 +55,11 @@ def load_data(csv_path, validation_ratio=0.2):
         header = next(reader)
         data = []
         for row in reader:
-            # Skip rows with missing data
             if '' in row:
                 continue
-            # Convert diagnosis to 0/1, skip id
-            features = list(map(float, row[2:]))
-            label = 1.0 if row[1] == 'M' else 0.0
+            features = list(map(float, row[1:5]))
+            label_map = {'Iris-setosa': 0, 'Iris-versicolor': 1, 'Iris-virginica': 2}
+            label = label_map[row[5]]
             data.append((features, label))
         
     random.shuffle(data)
@@ -80,13 +83,21 @@ def load_data(csv_path, validation_ratio=0.2):
 
     return X, y, X_val, y_val
 
-def init_neuron_layers(layer_nb, X):
+def one_hot_encode(Y, num_classes):
+    # Y: Vector or list of class indices, num_classes: int
+    m = len(Y)
+    one_hot = []
+    for c in range(num_classes):
+        one_hot.append([1 if int(Y[i]) == c else 0 for i in range(m)])
+    return Matrix(one_hot)
+
+def init_neuron_layers(layer_nb, X, num_classes):
     n = [X.num_cols]  # Input layer
     neurons = 64  # or any power of 2 you want to start with
     for i in range(layer_nb - 1):
         n.append(neurons)
         neurons = max(2, neurons // 2)  # Halve, but not less than 2
-    n.append(1)  # Output layer
+    n.append(num_classes)  # Output layer
     print(n)
     return n
 
@@ -108,16 +119,26 @@ def neuron_init(n, m):
     
     return weight_array, bias_array
 
-def train(weight_array, bias_array, A0, Y, n, m, alpha, epochs, patience=20, min_delta=1e-6):
+def train(weight_array, bias_array, A0, Y, n, m, alpha, epochs, patience=200, min_delta=1e-6, output_activation='sigmoid'):
     costs = []
     best_cost = float('inf')
     epochs_no_improve = 0
 
     for e in range(epochs):
         y_hat, AL = layer_calculations(m, weight_array, bias_array, A0, n)
-        error = cost(y_hat, Y)
+        if output_activation == 'softmax':
+            error = cost_softmax(y_hat, Y)
+        else:
+            error = cost_sigmoid(y_hat, Y)
         costs.append(error)
-        dC_dW, dC_db = backpropagation_loop(y_hat, Y, AL, weight_array, n, m)
+        
+        if output_activation == "softmax":
+            Y_one_hot = one_hot_encode(Y, n[-1])
+            dC_dW, dC_db = backpropagation_loop(y_hat, Y_one_hot, AL, weight_array, n, m)
+        else:
+            dC_dW, dC_db = backpropagation_loop(y_hat, Y, AL, weight_array, n, m)
+
+        
         weight_array, bias_array = update_weights_and_biases(weight_array, bias_array, dC_dW, dC_db, m, alpha)
 
         if e % 20 == 0:
@@ -136,7 +157,7 @@ def train(weight_array, bias_array, A0, Y, n, m, alpha, epochs, patience=20, min
 
     return costs
 
-def layer_calculations(m, weight_matrices, bias_vector, A0, n):
+def layer_calculations(m, weight_matrices, bias_vector, A0, n, output_activation='sigmoid'):
         AL = [A0]
         A_prev = A0
         num_layers = len(weight_matrices)
@@ -144,14 +165,21 @@ def layer_calculations(m, weight_matrices, bias_vector, A0, n):
             Z = weight_matrices[l].mul_mat(A_prev)
             Z = Z.add_vector_to_matrix(bias_vector[l])
             assert Z.shape() == (n[l + 1], m), f"Z{l + 1} shape mismatch"
-            A = my_sigmoid(Z)
+            if l == len(weight_matrices) - 1:
+                # Output layer
+                if output_activation == "softmax":
+                    A = my_softmax(Z)
+                else:
+                    A = my_sigmoid(Z)
+            else:
+                A = my_sigmoid(Z)
             assert A.shape() == (n[l + 1], m), f"A{l + 1} shape mismatch"
             AL.append(A)
             A_prev = A
         y_hat = AL[-1]
         return y_hat, AL
 
-def cost(y_hat, y):
+def cost_sigmoid(y_hat, y):
     """Compute the cost function with numerical stability (epsilon)."""
 
     eps = 1e-8
@@ -166,6 +194,30 @@ def cost(y_hat, y):
     summed_loss = sum(losses) / m
     return summed_loss
 
+def cost_softmax(y_hat, y):
+    """Compute the cost function for softmax output with numerical stability."""
+
+    if isinstance(y, Matrix):
+        # If shape is (1, m) or (m, 1), flatten to [Y[0][i] for i in range(m)] or [Y[i][0] for i in range(m)]
+        if len(y.rows) == 1:
+            y_flat = y.rows[0]
+        elif len(y.rows[0]) == 1:
+            y_flat = [row[0] for row in y.rows]
+        else:
+            raise ValueError("y Matrix shape not supported for cost_softmax")
+    elif isinstance(y, list) and isinstance(y[0], list):
+        y_flat = [item[0] for item in y]
+    else:
+        y_flat = list(y)
+
+    m = len(y_flat)
+    epsilon = 1e-12
+    losses = []
+    for i in range(m):
+        y_pred = [row[i] for row in y_hat.rows]
+        y_true = int(y_flat[i])
+        losses.append(-log(y_pred[y_true] + epsilon))
+    return sum(losses) / m
 
 def my_sigmoid(x):
     """Sigmoid activation function with overflow protection."""
@@ -183,6 +235,40 @@ def my_sigmoid(x):
         return type(x)([safe_sigmoid(v) for v in x])
     else:
         return safe_sigmoid(x)
+
+def my_softmax(Z):
+    """Softmax activation function with numerical stability."""
+
+    if isinstance(Z, Matrix):
+    # Compute max for each column for numerical stability
+        num_cols = len(Z.rows[0])
+        max_per_col = []
+        for j in range(num_cols):
+            max_per_col.append(max(row[j] for row in Z.rows))
+    
+        # Subtract max and exponentiate
+        exp_rows = []
+        for i, row in enumerate(Z.rows):
+            exp_row = []
+            for j, val in enumerate(row):
+                exp_row.append(exp(val - max_per_col[j]))
+            exp_rows.append(exp_row)
+        exp_Z = Matrix(exp_rows)
+    
+        # Sum over columns
+        sum_exp_per_col = []
+        for j in range(num_cols):
+            sum_exp_per_col.append(sum(exp_Z.rows[i][j] for i in range(len(exp_Z.rows))))
+    
+        # Divide each column by its sum
+        softmax_rows = []
+        for i, row in enumerate(exp_Z.rows):
+            softmax_row = []
+            for j, val in enumerate(row):
+                softmax_row.append(val / sum_exp_per_col[j])
+            softmax_rows.append(softmax_row)
+
+    return Matrix(softmax_rows)
 
 def backpropagation_loop(y_hat, Y, A_list, W_list, n, m):
     dC_dA = (1/m) * (y_hat - Y)
@@ -250,21 +336,32 @@ def update_weights_and_biases(weight_matrices, bias_vectors, dC_dW, dC_db, m, le
         
     return weight_matrices, bias_vectors
 
-def validate(weight_array, bias_array, X_val, y_val, n):
-    """
-    Evaluate the model on the validation set.
-    Returns accuracy.
-    """
+def validate(weight_array, bias_array, X_val, y_val, n, output_activation="softmax"):
     m_val = X_val.num_rows
     A0_val = X_val.transpose()
-    y_hat_val, _ = layer_calculations(m_val, weight_array, bias_array, A0_val, n)
-    # Flatten predictions and labels
-    y_hat_flat = [v for row in y_hat_val.rows for v in row]
-    y_true_flat = [v for v in y_val]
-    # Apply threshold 0.5 to get predicted class
-    y_pred = [1 if v >= 0.5 else 0 for v in y_hat_flat]
-    correct = sum(1 for yp, yt in zip(y_pred, y_true_flat) if yp == yt)
-    accuracy = correct / len(y_true_flat)
+    y_hat_val, _ = layer_calculations(m_val, weight_array, bias_array, A0_val, n, output_activation=output_activation)
+
+    # For softmax: pick the class with the highest probability
+    if output_activation == "softmax":
+        y_pred = [max(enumerate([row[i] for row in y_hat_val.rows]), key=lambda x: x[1])[0] for i in range(m_val)]
+    else:  # sigmoid
+        y_pred = [1 if y_hat_val.rows[0][i] >= 0.5 else 0 for i in range(m_val)]
+
+    # Flatten y_val if needed
+    if hasattr(y_val, "rows"):
+        if len(y_val.rows[0]) == 1:
+            y_true = [row[0] for row in y_val.rows]
+        else:
+            y_true = y_val.rows[0]
+    else:
+        y_true = list(y_val)
+
+    # Print predictions and true labels for debugging
+    print("Predicted:", y_pred[:20])
+    print("True:     ", y_true[:20])
+
+    correct = sum(1 for yp, yt in zip(y_pred, y_true) if yp == yt)
+    accuracy = correct / len(y_true)
     print(f"Validation accuracy: {accuracy:.4f}")
     return accuracy
 
